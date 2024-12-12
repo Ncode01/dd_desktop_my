@@ -1,22 +1,9 @@
 import 'package:flutter/material.dart';
+import 'models/table_data.dart';
 import 'package:flutter/services.dart';
-
-defaultColor(double opacity) => Colors.black.withOpacity(opacity);
-defaultGlassEffect(BoxDecoration decoration) => decoration.copyWith(
-      gradient: LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [defaultColor(0.4), defaultColor(0.2)],
-        stops: const [0.0, 1.0],
-      ),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withOpacity(0.15),
-          blurRadius: 30,
-          offset: Offset(0, 5),
-        ),
-      ],
-    );
+import 'pages/menu_page.dart';
+import 'widgets/order_summary.dart';
+import 'services/storage_service.dart'; // Import StorageService
 
 void main() {
   runApp(RestaurantManagementApp());
@@ -39,15 +26,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final List<TableData> tables = List.generate(
-    6,
-    (index) => TableData(
-      id: index + 1,
-      capacity: 4,
-      status: TableStatus.available,
-      items: [],
-    ),
-  );
+  final List<TableData> tables = [];
 
   TableData? selectedTable;
 
@@ -55,6 +34,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     RawKeyboard.instance.addListener(_handleKeyEvent);
+    _loadTablesData(); // Load tables on initialization
   }
 
   @override
@@ -63,14 +43,47 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
+  Future<void> _loadTablesData() async {
+    final loadedTables = await StorageService.loadTables();
+    setState(() {
+      if (loadedTables.isNotEmpty) {
+        tables.clear();
+        tables.addAll(loadedTables);
+      } else {
+        // Initialize with default tables if none are saved
+        tables.addAll(List.generate(
+          6,
+          (index) => TableData(
+            id: index + 1,
+            capacity: 4,
+            status: TableStatus.available,
+            items: [],
+          ),
+        ));
+      }
+    });
+  }
+
+  void _saveTablesData() {
+    StorageService.saveTables(tables);
+  }
+
   void _handleKeyEvent(RawKeyEvent event) {
     if (event is RawKeyDownEvent) {
       final key = event.logicalKey;
 
-      // Select table using number keys
-      if (key.keyId >= LogicalKeyboardKey.digit1.keyId &&
-          key.keyId <= LogicalKeyboardKey.digit6.keyId) {
-        int tableNumber = key.keyId - LogicalKeyboardKey.digit1.keyId + 1;
+      // Update key handling for number keys
+      Map<LogicalKeyboardKey, int> keyToTableNumber = {
+        LogicalKeyboardKey.digit1: 1,
+        LogicalKeyboardKey.digit2: 2,
+        LogicalKeyboardKey.digit3: 3,
+        LogicalKeyboardKey.digit4: 4,
+        LogicalKeyboardKey.digit5: 5,
+        LogicalKeyboardKey.digit6: 6,
+      };
+
+      if (keyToTableNumber.containsKey(key)) {
+        int tableNumber = keyToTableNumber[key]!;
         if (tableNumber <= tables.length) {
           setState(() {
             selectedTable = tables[tableNumber - 1];
@@ -92,6 +105,11 @@ class _HomeScreenState extends State<HomeScreen> {
       if (key == LogicalKeyboardKey.keyC && event.isControlPressed) {
         _checkoutTable();
       }
+
+      // Open menu on Enter key press
+      if (key == LogicalKeyboardKey.enter && selectedTable != null) {
+        _navigateToMenuPage();
+      }
     }
   }
 
@@ -105,9 +123,26 @@ class _HomeScreenState extends State<HomeScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => MenuPage(isTakeaway: true),
+        builder: (context) =>
+            MenuPage(isTakeaway: true, onItemSelected: _addItemToTable),
       ),
     );
+  }
+
+  void _addItemToTable(String item) {
+    if (selectedTable != null) {
+      setState(() {
+        int tableIndex = tables.indexWhere((t) => t.id == selectedTable!.id);
+        if (tableIndex != -1) {
+          tables[tableIndex] = tables[tableIndex].copyWith(
+            items: List.from(tables[tableIndex].items)..add(item),
+            status: TableStatus.occupied,
+          );
+          selectedTable = tables[tableIndex];
+        }
+      });
+      _saveTablesData(); // Save after updating
+    }
   }
 
   void _navigateToMenuPage() {
@@ -115,14 +150,32 @@ class _HomeScreenState extends State<HomeScreen> {
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => MenuPage(table: selectedTable),
+          builder: (context) => MenuPage(
+            table: selectedTable,
+            isTakeaway: false,
+            onItemSelected: _addItemToTable,
+          ),
         ),
-      );
+      ).then((_) {
+        setState(() {}); // Refresh the state after returning from the menu page
+      });
     }
   }
 
   void _checkoutTable() {
-    // Logic for checkout
+    if (selectedTable != null) {
+      setState(() {
+        int tableIndex = tables.indexWhere((t) => t.id == selectedTable!.id);
+        if (tableIndex != -1) {
+          tables[tableIndex] = tables[tableIndex].copyWith(
+            items: [],
+            status: TableStatus.available,
+          );
+          selectedTable = tables[tableIndex];
+        }
+      });
+      _saveTablesData(); // Save after updating
+    }
   }
 
   @override
@@ -130,19 +183,17 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       body: Row(
         children: [
+          _buildNavigationSidebar(),
           Expanded(
-            flex: 1,
-            child: NavigationSidebar(),
-          ),
-          Expanded(
-            flex: 3,
+            flex: 4,
             child: Padding(
               padding: const EdgeInsets.all(16.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Title
                   Text(
-                    'Select Table',
+                    'Tables',
                     style: TextStyle(
                       fontSize: 28,
                       fontWeight: FontWeight.bold,
@@ -150,6 +201,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                   SizedBox(height: 20),
+                  // Table Grid
                   Expanded(
                     child: GridView.builder(
                       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -161,179 +213,59 @@ class _HomeScreenState extends State<HomeScreen> {
                       itemBuilder: (context, index) {
                         final table = tables[index];
                         final isSelected = selectedTable?.id == table.id;
+
+                        // Determine the background color based on status
+                        Color backgroundColor;
+                        IconData statusIcon;
+                        if (table.status == TableStatus.available) {
+                          backgroundColor = Colors.green.withOpacity(0.7);
+                          statusIcon = Icons.check_circle;
+                        } else if (table.status == TableStatus.occupied) {
+                          backgroundColor = Colors.red.withOpacity(0.7);
+                          statusIcon = Icons.schedule;
+                        } else {
+                          backgroundColor = Colors.grey.withOpacity(0.7);
+                          statusIcon = Icons.close;
+                        }
+
                         return GestureDetector(
                           onTap: () => selectTable(table),
                           child: Container(
-                            decoration: defaultGlassEffect(
-                              BoxDecoration(
-                                borderRadius: BorderRadius.circular(16),
-                                color: Colors.transparent,
-                                border: isSelected
-                                    ? Border.all(
-                                        color: Colors.blueAccent, width: 2)
-                                    : null,
-                              ),
+                            key: Key(
+                                'table_${table.id}_container'), // Assign Key
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(16),
+                              color: backgroundColor,
+                              border: isSelected
+                                  ? Border.all(
+                                      color: Colors.blueAccent, width: 3)
+                                  : null,
                             ),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
+                            child: Stack(
                               children: [
-                                Text(
-                                  'Table ${table.id}',
-                                  style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                                Text(
-                                  'Capacity: ${table.capacity}',
-                                  style: TextStyle(color: Colors.white70),
-                                ),
-                                SizedBox(height: 8),
-                                Container(
-                                  padding: EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 5,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(16),
-                                    color: table.items.isEmpty
-                                        ? Colors.greenAccent
-                                        : Colors.orangeAccent,
-                                  ),
+                                Center(
                                   child: Text(
-                                    table.items.isEmpty
-                                        ? 'Available'
-                                        : 'Occupied',
+                                    'Table ${table.id}',
+                                    key: Key(
+                                        'table_${table.id}_text'), // Assign Key
                                     style: TextStyle(
-                                      color: Colors.black,
+                                      fontSize: 24,
                                       fontWeight: FontWeight.bold,
+                                      color: Colors.white,
                                     ),
                                   ),
                                 ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                  SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: _initiateTakeaway,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blueAccent,
-                      padding: EdgeInsets.symmetric(vertical: 14),
-                    ),
-                    child: Text('Takeaway (T)'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          Expanded(
-            flex: 2,
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Container(
-                decoration: defaultGlassEffect(
-                  BoxDecoration(
-                    color: Colors.transparent,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                ),
-                child: OrderSummary(
-                  selectedTable: selectedTable,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class MenuPage extends StatelessWidget {
-  final TableData? table;
-  final bool isTakeaway;
-
-  const MenuPage({Key? key, this.table, this.isTakeaway = false})
-      : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-            isTakeaway ? 'Takeaway Order' : 'Table ${table?.id ?? ''} Order'),
-        centerTitle: true,
-      ),
-      body: Row(
-        children: [
-          Expanded(
-            flex: 1,
-            child: NavigationSidebar(),
-          ),
-          Expanded(
-            flex: 5,
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Menu',
-                    style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                  SizedBox(height: 20),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TabBarMenu(),
-                      ),
-                    ],
-                  ),
-                  SizedBox(height: 20),
-                  Expanded(
-                    child: GridView.builder(
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 3,
-                        crossAxisSpacing: 16.0,
-                        mainAxisSpacing: 16.0,
-                      ),
-                      itemCount: 12, // Placeholder for menu items
-                      itemBuilder: (context, index) {
-                        return GestureDetector(
-                          onTap: () {
-                            // Logic to add item to order summary
-                          },
-                          child: Container(
-                            decoration: defaultGlassEffect(
-                              BoxDecoration(
-                                borderRadius: BorderRadius.circular(16),
-                                color: Colors.transparent,
-                              ),
-                            ),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(
-                                  'Item $index',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
+                                Positioned(
+                                  top: 8,
+                                  right: 8,
+                                  child: Icon(
+                                    statusIcon,
                                     color: Colors.white,
+                                    size: 32,
+                                    key: Key(
+                                        'table_${table.id}_status_icon'), // Assign Key
                                   ),
                                 ),
-                                Text(
-                                  'LKR 500',
-                                  style: TextStyle(color: Colors.white70),
-                                ),
                               ],
                             ),
                           ),
@@ -341,184 +273,66 @@ class MenuPage extends StatelessWidget {
                       },
                     ),
                   ),
+                  SizedBox(height: 20),
+                  // Additional Buttons (if any)
+                  ElevatedButton(
+                    key: Key('start_takeaway_button'), // Assign Key
+                    onPressed: _initiateTakeaway,
+                    child: Text('Start Takeaway Order (T)'),
+                  ),
                 ],
               ),
+            ),
+          ),
+          // Adjusted OrderSummary container
+          Container(
+            width: 300, // Fixed width for consistency
+            padding: const EdgeInsets.all(16.0),
+            child: OrderSummary(
+              selectedTable: selectedTable,
+              onCheckout: _checkoutTable, // Pass the checkout method
+              onAddItem: _addItemToTable, // Add this parameter
             ),
           ),
         ],
       ),
     );
   }
-}
 
-class TabBarMenu extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          CategoryChip(label: 'Appetizers'),
-          CategoryChip(label: 'Breakfast'),
-          CategoryChip(label: 'Lunch'),
-          CategoryChip(label: 'Dinner'),
-          CategoryChip(label: 'Beverages'),
-          CategoryChip(label: 'Dessert'),
-        ],
-      ),
-    );
-  }
-}
-
-class CategoryChip extends StatelessWidget {
-  final String label;
-
-  const CategoryChip({Key? key, required this.label}) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8.0),
-      child: ActionChip(
-        label: Text(
-          label,
-          style: TextStyle(
-            color: Colors.white,
-          ),
-        ),
-        onPressed: () {
-          // Logic for filtering menu items
-        },
-        backgroundColor: Colors.grey.withOpacity(0.2),
-      ),
-    );
-  }
-}
-
-class OrderSummary extends StatelessWidget {
-  final TableData? selectedTable;
-
-  const OrderSummary({Key? key, this.selectedTable}) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Order Summary',
-            style: TextStyle(
-                fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
-          ),
-          SizedBox(height: 16),
-          selectedTable == null
-              ? Center(
-                  child: Text(
-                    'No Table Selected',
-                    style: TextStyle(color: Colors.white70, fontSize: 18),
-                  ),
-                )
-              : Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Table ${selectedTable!.id}',
-                        style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white),
-                      ),
-                      SizedBox(height: 8),
-                      if (selectedTable!.items.isEmpty)
-                        Center(
-                          child: Text(
-                            'No items added',
-                            style:
-                                TextStyle(color: Colors.white70, fontSize: 16),
-                          ),
-                        )
-                      else
-                        Expanded(
-                          child: ListView.builder(
-                            itemCount: selectedTable!.items.length,
-                            itemBuilder: (context, index) {
-                              return ListTile(
-                                title: Text(selectedTable!.items[index],
-                                    style: TextStyle(color: Colors.white)),
-                                trailing: Text('LKR 500',
-                                    style: TextStyle(color: Colors.white70)),
-                              );
-                            },
-                          ),
-                        ),
-                      Spacer(),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: ElevatedButton(
-                              onPressed: () {},
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green,
-                                padding: EdgeInsets.symmetric(vertical: 14),
-                              ),
-                              child: Text('Add Items (Ctrl + A)'),
-                            ),
-                          ),
-                          SizedBox(width: 16),
-                          Expanded(
-                            child: ElevatedButton(
-                              onPressed: () {},
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.orangeAccent,
-                                padding: EdgeInsets.symmetric(vertical: 14),
-                              ),
-                              child: Text('Checkout (Ctrl + C)'),
-                            ),
-                          ),
-                        ],
-                      )
-                    ],
-                  ),
-                ),
-        ],
-      ),
-    );
-  }
-}
-
-class NavigationSidebar extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
+  // Define NavigationSidebar internally
+  Widget _buildNavigationSidebar() {
     return Container(
+      width: 60,
       decoration: defaultGlassEffect(
         BoxDecoration(color: Colors.transparent),
       ),
-      padding: EdgeInsets.all(16),
+      padding: EdgeInsets.all(8),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Column(
             children: [
               IconButton(
+                key: Key('home_button'), // Assign Key
                 onPressed: () {},
                 icon: Icon(Icons.home, color: Colors.white, size: 28),
               ),
               SizedBox(height: 20),
               IconButton(
+                key: Key('inventory_button'), // Assign Key
                 onPressed: () {},
                 icon: Icon(Icons.inventory, color: Colors.white, size: 28),
               ),
               SizedBox(height: 20),
               IconButton(
+                key: Key('table_chart_button'), // Assign Key
                 onPressed: () {},
                 icon: Icon(Icons.table_chart, color: Colors.white, size: 28),
               ),
             ],
           ),
           IconButton(
+            key: Key('settings_button'), // Assign Key
             onPressed: () {},
             icon: Icon(Icons.settings, color: Colors.white, size: 28),
           ),
@@ -528,18 +342,83 @@ class NavigationSidebar extends StatelessWidget {
   }
 }
 
-class TableData {
-  final int id;
-  final int capacity;
-  final TableStatus status;
-  final List<String> items;
-
-  TableData({
-    required this.id,
-    required this.capacity,
-    required this.status,
-    required this.items,
-  });
+// Add the defaultGlassEffect function here
+BoxDecoration defaultGlassEffect(BoxDecoration decoration) {
+  return decoration.copyWith(
+    color: Colors.white.withOpacity(0.1),
+    backgroundBlendMode: BlendMode.overlay,
+    boxShadow: [
+      BoxShadow(
+        color: Colors.white.withOpacity(0.05),
+        blurRadius: 10,
+        spreadRadius: 1,
+      ),
+    ],
+  );
 }
 
-enum TableStatus { available, occupied, unavailable }
+class TabBarMenu extends StatelessWidget {
+  final String selectedCategory;
+  final Function(String) onCategorySelected;
+
+  const TabBarMenu({
+    Key? key,
+    required this.selectedCategory,
+    required this.onCategorySelected,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    final categories = [
+      'Appetizers',
+      'Breakfast',
+      'Lunch',
+      'Dinner',
+      'Beverages',
+      'Dessert'
+    ];
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: categories.map((category) {
+          return CategoryChip(
+            label: category,
+            isSelected: category == selectedCategory,
+            onSelected: () => onCategorySelected(category),
+          );
+        }).toList(),
+      ),
+    );
+  }
+}
+
+class CategoryChip extends StatelessWidget {
+  final String label;
+  final bool isSelected;
+  final VoidCallback onSelected;
+
+  const CategoryChip({
+    Key? key,
+    required this.label,
+    required this.isSelected,
+    required this.onSelected,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8.0),
+      child: ActionChip(
+        label: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? Colors.black : Colors.white,
+          ),
+        ),
+        onPressed: onSelected,
+        backgroundColor:
+            isSelected ? Colors.white : Colors.grey.withOpacity(0.2),
+      ),
+    );
+  }
+}
