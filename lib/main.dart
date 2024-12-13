@@ -3,9 +3,13 @@ import 'models/table_data.dart';
 import 'package:flutter/services.dart';
 import 'pages/menu_page.dart';
 import 'widgets/order_summary.dart';
-import 'services/storage_service.dart'; // Import StorageService
+import 'package:firebase_core/firebase_core.dart';
+import 'services/firebase_service.dart';
+import 'dart:async'; // Add this import for StreamSubscription
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await FirebaseService.initialize();
   runApp(RestaurantManagementApp());
 }
 
@@ -26,7 +30,9 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  final FirebaseService _firebaseService = FirebaseService();
   final List<TableData> tables = [];
+  StreamSubscription<List<TableData>>? _tablesSubscription;
 
   TableData? selectedTable;
 
@@ -34,23 +40,27 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     RawKeyboard.instance.addListener(_handleKeyEvent);
-    _loadTablesData(); // Load tables on initialization
+    _subscribeToTables();
   }
 
   @override
   void dispose() {
+    _tablesSubscription?.cancel();
     RawKeyboard.instance.removeListener(_handleKeyEvent);
     super.dispose();
   }
 
-  Future<void> _loadTablesData() async {
-    final loadedTables = await StorageService.loadTables();
-    setState(() {
-      if (loadedTables.isNotEmpty) {
+  void _subscribeToTables() {
+    _tablesSubscription =
+        _firebaseService.streamTables().listen((updatedTables) {
+      setState(() {
         tables.clear();
-        tables.addAll(loadedTables);
-      } else {
-        // Initialize with default tables if none are saved
+        tables.addAll(updatedTables);
+      });
+    }, onError: (error) {
+      print('Error streaming tables: $error');
+      // Initialize with default tables if there's an error
+      if (tables.isEmpty) {
         tables.addAll(List.generate(
           6,
           (index) => TableData(
@@ -60,12 +70,13 @@ class _HomeScreenState extends State<HomeScreen> {
             items: [],
           ),
         ));
+        _firebaseService.saveTables(tables);
       }
     });
   }
 
   void _saveTablesData() {
-    StorageService.saveTables(tables);
+    _firebaseService.saveTables(tables);
   }
 
   void _handleKeyEvent(RawKeyEvent event) {
@@ -134,14 +145,15 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         int tableIndex = tables.indexWhere((t) => t.id == selectedTable!.id);
         if (tableIndex != -1) {
-          tables[tableIndex] = tables[tableIndex].copyWith(
+          TableData updatedTable = tables[tableIndex].copyWith(
             items: List.from(tables[tableIndex].items)..add(item),
             status: TableStatus.occupied,
           );
-          selectedTable = tables[tableIndex];
+          tables[tableIndex] = updatedTable;
+          selectedTable = updatedTable;
+          _firebaseService.updateTable(updatedTable);
         }
       });
-      _saveTablesData(); // Save after updating
     }
   }
 
@@ -164,17 +176,18 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _checkoutTable() {
     if (selectedTable != null) {
-      setState(() {
-        int tableIndex = tables.indexWhere((t) => t.id == selectedTable!.id);
-        if (tableIndex != -1) {
-          tables[tableIndex] = tables[tableIndex].copyWith(
-            items: [],
-            status: TableStatus.available,
-          );
-          selectedTable = tables[tableIndex];
-        }
-      });
-      _saveTablesData(); // Save after updating
+      int tableIndex = tables.indexWhere((t) => t.id == selectedTable!.id);
+      if (tableIndex != -1) {
+        TableData updatedTable = tables[tableIndex].copyWith(
+          items: [],
+          status: TableStatus.available,
+        );
+        setState(() {
+          tables[tableIndex] = updatedTable;
+          selectedTable = updatedTable;
+        });
+        _firebaseService.updateTable(updatedTable);
+      }
     }
   }
 

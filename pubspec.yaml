@@ -32,6 +32,10 @@ dependencies:
     sdk: flutter
   shared_preferences: ^2.2.0
   cupertino_icons: ^1.0.8
+  # Firebase dependencies for desktop
+  firebase_core: ^2.24.2
+  cloud_firestore: ^4.13.6  # Ensure this is the latest version
+  firedart: ^0.9.7  # Alternative Firebase implementation for desktop
 
 dev_dependencies:
   flutter_test:
