@@ -1,7 +1,16 @@
+import 'package:hive/hive.dart';
+
+part 'table_data.g.dart';
+
+@HiveType(typeId: 0)
 class TableData {
+  @HiveField(0)
   final int id;
+  @HiveField(1)
   final int capacity;
+  @HiveField(2)
   final TableStatus status;
+  @HiveField(3)
   final List<String> items;
 
   TableData({
@@ -26,4 +35,12 @@ class TableData {
   }
 }
 
-enum TableStatus { available, occupied, unavailable }
+@HiveType(typeId: 1)
+enum TableStatus {
+  @HiveField(0)
+  available,
+  @HiveField(1)
+  occupied,
+  @HiveField(2)
+  unavailable
+}

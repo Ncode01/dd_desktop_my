@@ -3,13 +3,17 @@ import 'models/table_data.dart';
 import 'package:flutter/services.dart';
 import 'pages/menu_page.dart';
 import 'widgets/order_summary.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'services/firebase_service.dart';
-import 'dart:async'; // Add this import for StreamSubscription
+import 'services/local_storage_service.dart';
+import 'services/repository.dart';
+import 'dart:async';
+import 'package:hive_flutter/hive_flutter.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await FirebaseService.initialize();
+
+  // Initialize local storage
+  await LocalStorageService.initialize();
+
   runApp(RestaurantManagementApp());
 }
 
@@ -30,16 +34,20 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final FirebaseService _firebaseService = FirebaseService();
+  final Repository _repository = Repository();
   final List<TableData> tables = [];
   StreamSubscription<List<TableData>>? _tablesSubscription;
-
   TableData? selectedTable;
 
   @override
   void initState() {
     super.initState();
+    _initializeRepository();
     RawKeyboard.instance.addListener(_handleKeyEvent);
+  }
+
+  Future<void> _initializeRepository() async {
+    await _repository.initialize();
     _subscribeToTables();
   }
 
@@ -51,8 +59,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _subscribeToTables() {
-    _tablesSubscription =
-        _firebaseService.streamTables().listen((updatedTables) {
+    _tablesSubscription = _repository.streamTables().listen((updatedTables) {
       setState(() {
         tables.clear();
         tables.addAll(updatedTables);
@@ -70,13 +77,13 @@ class _HomeScreenState extends State<HomeScreen> {
             items: [],
           ),
         ));
-        _firebaseService.saveTables(tables);
+        _repository.saveTables(tables);
       }
     });
   }
 
   void _saveTablesData() {
-    _firebaseService.saveTables(tables);
+    _repository.saveTables(tables);
   }
 
   void _handleKeyEvent(RawKeyEvent event) {
@@ -151,7 +158,7 @@ class _HomeScreenState extends State<HomeScreen> {
           );
           tables[tableIndex] = updatedTable;
           selectedTable = updatedTable;
-          _firebaseService.updateTable(updatedTable);
+          _repository.updateTable(updatedTable);
         }
       });
     }
@@ -186,7 +193,7 @@ class _HomeScreenState extends State<HomeScreen> {
           tables[tableIndex] = updatedTable;
           selectedTable = updatedTable;
         });
-        _firebaseService.updateTable(updatedTable);
+        _repository.updateTable(updatedTable);
       }
     }
   }
